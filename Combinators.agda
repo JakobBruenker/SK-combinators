@@ -242,7 +242,7 @@ data _-[_]→_ : (x : SK) → (steps : ℕ) → (y : SK) → Set where
 Reducible : SK → Set
 Reducible x = ∃[ x' ] (x -[ 1 ]→ x')
 
-isReducible : (x : SK) → Dec (∃[ x' ] (x -[ 1 ]→ x'))
+isReducible : ∀ x → Dec (Reducible x)
 isReducible S = no λ ()
 isReducible K = no λ ()
 isReducible (S ` x) with isReducible x
@@ -279,7 +279,10 @@ NormalForm x = ¬ Reducible x
 -- NormalForm x = ∀ {x' n} → x -[ n ]→ x' → n ≡ zero
 -- TODO could try to make an iso out of this just for fun
 
--- TODO isNormalForm :i ∀ x → Dec (NormalForm x)
+isNormalForm : ∀ x → Dec (NormalForm x)
+isNormalForm x with isReducible x
+... | yes p = no λ z → z p
+... | no ¬p = yes ¬p
 
 infix 1 _-[]→_
 
@@ -288,11 +291,6 @@ x -[]→ y = ∃[ n ] (x -[ n ]→ y)
 
 Cycle : SK → Set
 Cycle x = x -[]→ x
-
--- lemma : ∀ {x y n} → S ` x -[ n ]→ y → ∃[ y' ] (x -[ n ]→ y')
--- lemma equal = -, equal
--- lemma {n = zero} (`-stepˡ x) = -, equal
--- lemma (`-stepʳ x) = -, x
 
 step : ∀ {x y n} → x -[ suc n ]→ y → ∃[ x' ] (x' -[ n ]→ y)
 step (K-step p) = -, p
@@ -303,12 +301,6 @@ step (`-stepʳ p) with step p
 ... | _ , q = -, `-stepʳ q
 
 -- nSteps : (n : ℕ) → x -[ n + m ]→ y → ∃[ x' ] (x' -[ m ]→ y)
-
--- lemma''' : ∀ {x n} → (∀ x' → ¬ (x -[ n ]→ x')) → ∀ {x'}
---       → ¬ (S ` x -[ n ]→ x')
--- lemma''' {x} ¬p (equal p) = ¬p x (equal refl)
--- lemma''' ¬p (`-stepˡ (equal refl) q₁) = lemma''' ¬p q₁
--- lemma''' ¬p (`-stepʳ {y' = y'} q q₁) = ?
 
 -------------------------------------
 

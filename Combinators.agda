@@ -315,7 +315,7 @@ Reducible↔Reduction
   : ∀ {x} → Reducible x ↔ ∃[ n ] ∃[ y ] (x -[ suc n ]→ y)
 Reducible↔Reduction = record
   { to = t
-  ; from = ?
+  ; from = f
   }
   where
     t : ∀ {x} → Reducible x → ∃[ n ] ∃[ y ] (x -[ suc n ]→ y)
@@ -323,8 +323,16 @@ Reducible↔Reduction = record
     t (redS x y z) = zero , (x ` z ` (y ` z)) , S-step equal
     t (red`ˡ x y p) with t p
     ... | n' , x' , q = n' , (x' ` y) , `-stepˡ q
-    t (red`ʳ x y p) with t p
-    ... | n' , x' , q = ?
+    t (red`ʳ x y p) with t p | reducible? x
+    ... | n' , x' , q | no ¬r = n' , (x ` x') , `-stepʳ q ¬r
+    ... | n' , x' , q | yes r with t r
+    ...   | n'' , x'' , s = n'' , (x'' ` y) , `-stepˡ s
+
+    f : ∀ {x} → ∃[ n ] ∃[ y ] (x -[ suc n ]→ y) → Reducible x
+    f (n , _ , K-step {x} {y} p) = redK _ _
+    f (n , _ , S-step {x} {y} {z} p) = redS x y z
+    f (n , (_ ` y) , `-stepˡ p) = red`ˡ _ _ (f (-, (-, p)))
+    f (n , .(_ ` _) , `-stepʳ p _) = red`ʳ _ _ (f (-, (-, p)))
 
 -- TODO (p q : x -[ n ]→ y) → p ≡ q
 

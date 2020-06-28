@@ -9,6 +9,7 @@ open import Agda.Builtin.Sigma
     hiding (module Σ)
 module Σ = Agda.Builtin.Sigma.Σ
   renaming (fst to proj₁; snd to proj₂)
+open import Agda.Builtin.Unit
 
 foldℕ : {r : Set} → r → (r → r) → (n : ℕ) → r
 foldℕ z _ zero = z
@@ -246,331 +247,398 @@ pattern Y = S ` S ` K ` (S ` (K ` (S ` S ` (S ` (S ` S ` K)))) ` K)
 pattern skZero = K ` (S ` K ` K)
 pattern skSuc  = S ` (S ` (K ` S) ` K)
 
+-- This type mostly exists because it's necessary for the
+-- definition of reductions, otherwise reducibility could be
+-- defined in terms of the existence of a reduction
+data Reducible : (x : SK) → Set where
+  redK  : ∀ x y   → Reducible (K ` x ` y)
+  redS  : ∀ x y z → Reducible (S ` x ` y ` z)
+  red`ˡ : ∀ x y   → Reducible x → Reducible (x ` y)
+  red`ʳ : ∀ x y   → Reducible y → Reducible (x ` y)
+
 infix 1 _-[_]→_
 infix 1 _-[]→_
 
--- x can be reduced to y in exactly n steps
+-- Reduction: x can be reduced to y in exactly n steps
 data _-[_]→_ : (x : SK) → (steps : ℕ) → (y : SK) → Set where
-  equal : ∀ {x} → x -[ zero ]→ x
-  K-step : ∀ {x y z n} → x -[ n ]→ z
+  equal : ∀ {x} 
+        → x -[ zero ]→ x
+  K-step : ∀ {x y z n} 
+         → x -[ n ]→ z
          → K ` x ` y -[ suc n ]→ z
-  S-step : ∀ {x y z w n} → x ` z ` (y ` z) -[ n ]→ w
+  S-step : ∀ {x y z w n}
+         → x ` z ` (y ` z) -[ n ]→ w
          → S ` x ` y ` z -[ suc n ]→ w
-  `-stepˡ : ∀ {x x' y n} → x -[ n ]→ x' → x ` y -[ n ]→ x' ` y
-  `-stepʳ : ∀ {x y y' n} → y -[ n ]→ y' → x ` y -[ n ]→ x ` y'
+  `-stepˡ : ∀ {x x' y n}
+          → x -[ suc n ]→ x'
+          → x ` y -[ suc n ]→ x' ` y
+  `-stepʳ : ∀ {x y y' n}
+          → y -[ suc n ]→ y'
+          -- → ¬ ∃[ x' ] ∃[ m ] (x -[ suc m ]→ x') -- doesn't work
+          → ¬ Reducible x                -- so we use this instead
+          → x ` y -[ suc n ]→ x ` y'
 
+-- x can be reduced to y in some number of steps
+-- note that this number could be zero, so this does not
+-- imply reducibility
 _-[]→_ : SK → SK → Set
 x -[]→ y = ∃[ n ] (x -[ n ]→ y)
-
-n-Reducible : ℕ → SK → Set
-n-Reducible n x = ∃[ x' ] (x -[ n ]→ x')
-
-Reducible : SK → Set
-Reducible = n-Reducible 1
 
 reducible? : ∀ x → Dec (Reducible x)
 reducible? S = no λ ()
 reducible? K = no λ ()
-reducible? (S ` x) with reducible? x
-... | yes (x' , p) = yes ((S ` x') , `-stepʳ p)
-... | no ¬p = no λ where (_ , `-stepʳ {y' = y'} p) → ¬p (y' , p)
-reducible? (K ` x) with reducible? x
-... | yes (x' , p) = yes ((K ` x') , `-stepʳ p)
-... | no ¬p = no λ where (_ , `-stepʳ {y' = y'} p) → ¬p (y' , p)
+reducible? (S ` y) with reducible? y
+... | yes p = yes (red`ʳ S y p)
+... | no ¬p = no λ where (red`ʳ .S .y p) → ¬p p
+reducible? (K ` y) with reducible? y
+... | yes p = yes (red`ʳ K y p)
+... | no ¬p = no λ where (red`ʳ .K .y p) → ¬p p
 reducible? (S ` x ` y) with reducible? x
-... | yes (x' , p) = yes ((S ` x' ` y) , `-stepˡ (`-stepʳ p))
+... | yes p = yes (red`ˡ (S ` x) y (red`ʳ S x p))
 ... | no ¬p with reducible? y
-...   | yes (y' , q) = yes ((S ` x ` y') , `-stepʳ q)
+...   | yes q = yes (red`ʳ (S ` x) y q)
 ...   | no ¬q = no λ where
-  (.(S ` _ ` y) , `-stepˡ (`-stepʳ {y' = y'} p)) → ¬p (y' , p)
-  (.(S ` x ` _) , `-stepʳ {y' = y'} p) → ¬q (y' , p)
-reducible? (K ` x ` y) = yes (x , K-step equal)
-reducible? (S ` y ` z ` w) =
-  yes ((y ` w ` (z ` w)) , S-step equal)
-reducible? (K ` x ` y ` z) =
-  yes ((x ` z) , `-stepˡ (K-step equal))
+  (red`ˡ .(S ` x) .y (red`ʳ .S .x p)) → ¬p p
+  (red`ʳ .(S ` x) .y p) → ¬q p
+reducible? (K ` x ` y) = yes (redK x y)
+reducible? (S ` y ` z ` w) = yes (redS y z w)
+reducible? (K ` y ` z ` w) = yes (red`ˡ (K ` y ` z) w (redK y z))
 reducible? (x ` y ` z ` w ` u) with reducible? (x ` y ` z ` w)
-... | yes (xyzw' , p) = yes ((xyzw' ` u) , `-stepˡ p)
+... | yes p = yes (red`ˡ (x ` y ` z ` w) u p)
 ... | no ¬p with reducible? u
-...   | yes (u' , q) = yes ((x ` y ` z ` w ` u') , `-stepʳ q)
+...   | yes q = yes (red`ʳ (x ` y ` z ` w) u q)
 ...   | no ¬q = no λ where
-  (.(_ ` u) , `-stepˡ {x' = x'} p) → ¬p (x' , p)
-  (.(x ` y ` z ` w ` _) , `-stepʳ {y' = y'} p) → ¬q (y' , p)
+  (red`ˡ .(x ` y ` z ` w) .u p) → ¬p p
+  (red`ʳ .(x ` y ` z ` w) .u p) → ¬q p
 
-sucnReducible↔Reducible :
-  ∀ x → ∃[ n ] n-Reducible (suc n) x ↔ Reducible x
-sucnReducible↔Reducible x = record
-  { to = t x
-  ; from = zero ,_
-  }
-  where
-    t : ∀ x
-      → ∃[ n ] ∃[ z ] (x -[ suc n ]→ z) → ∃[ y ] (x -[ 1 ]→ y)
-    t x (n , z , K-step {x = x'} p) = x' , K-step equal
-    t x (n , z , S-step {x = x'} {y = y'} {z = z'} p) =
-      (x' ` z' ` (y' ` z')) , S-step equal
-    t x (n , .(_ ` _) , `-stepˡ {y = y} p) with t _ (-, -, p)
-    ... | y' , q = (y' ` y) , `-stepˡ q
-    t x (n , .(_ ` _) , `-stepʳ {x = x'} p) with t _ (-, -, p)
-    ... | y' , q = (x' ` y') , `-stepʳ q
-
--- weakenReducibility : ∀ {n m x}
---                    → n-Reducible (m + n) x → n-Reducible n x
--- weakenReducibility p = {!   !}
-
-n+0≡n : ∀ n → n + 0 ≡ n
-n+0≡n zero = refl
-n+0≡n (suc n) rewrite n+0≡n n = refl
-
-reduce-trans
-  : ∀ {x z n m}
-  → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z)) ↔ x -[ n + m ]→ z
-reduce-trans = record
-  { to = ?
+Reducible↔Reduction
+  : ∀ {x} → Reducible x ↔ ∃[ n ] ∃[ y ] (x -[ suc n ]→ y)
+Reducible↔Reduction = record
+  { to = t
   ; from = ?
   }
   where
-    -- t : ∀ {x z n m}
-    --   → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z)) → x -[ n + m ]→ z
-    -- t (y , equal , q) = q
-    -- t (y , K-step p , q) = K-step (t (y , (p , q)))
-    -- t (y , S-step p , q) = S-step (t (y , (p , q)))
-    -- t (.(_ ` _) , `-stepˡ p , q) = {!   !}
-    -- t (.(_ ` _) , `-stepʳ p , q) = {!   !}
-    f : ∀ {x z n m}
-      → x -[ n + m ]→ z → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z))
-    f {x} {n = zero} p = x , equal , p
-    f {n = suc n} (K-step p) = {!   !}
-    f {n = suc n} (S-step p) = {!   !}
-    f {n = suc n} (`-stepˡ p) = {!   !}
-    f {n = suc n} (`-stepʳ p) = {!   !}
+    t : ∀ {x} → Reducible x → ∃[ n ] ∃[ y ] (x -[ suc n ]→ y)
+    t (redK x y) = zero , x , K-step equal
+    t (redS x y z) = zero , (x ` z ` (y ` z)) , S-step equal
+    t (red`ˡ x y p) with t p
+    ... | n' , x' , q = n' , (x' ` y) , `-stepˡ q
+    t (red`ʳ x y p) with t p
+    ... | n' , x' , q = ?
 
--- reduce-trans-to
---   : ∀ {x y z n m}
---   → ((x -[ n ]→ y) × (y -[ m ]→ z)) → x -[ n + m ]→ z
--- reduce-trans-to (equal , q) = q
--- reduce-trans-to (K-step p , q) = K-step (reduce-trans-to (p , q))
--- reduce-trans-to (S-step p , q) = S-step (reduce-trans-to (p , q))
--- reduce-trans-to {n = n₁} (`-stepˡ p , equal) rewrite n+0≡n n₁ = `-stepˡ p
--- reduce-trans-to (`-stepˡ p , K-step q) = {!   !}
--- reduce-trans-to (`-stepˡ p , S-step q) = {!   !}
--- reduce-trans-to (`-stepˡ p , `-stepˡ q) = {!   !}
--- reduce-trans-to (`-stepˡ p , `-stepʳ q) = {!   !}
--- reduce-trans-to (`-stepʳ p , q) = {!   !}
+-- TODO (p q : x -[ n ]→ y) → p ≡ q
 
--- reduce-trans-from
---   : ∀ {x y z n m}
---   → x -[ n + m ]→ z → ((x -[ n ]→ y) × (y -[ m ]→ z))
--- reduce-trans-from {n = zero} p = {!   !}
--- reduce-trans-from {n = suc n} p = {!   !}
+----------------------
 
--- reduce-trans-iso
---   : ∀ {x y z n m}
---   → ((x -[ n ]→ y) × (y -[ m ]→ z)) ≃ x -[ n + m ]→ z
--- reduce-trans-iso = record
---   { to = reduce-trans-to
---   ; from = ?
---   ; from∘to≡id = ?
---   ; to∘from≡id = ?
---   }
+--n-Reducible : ℕ → SK → Set
+--n-Reducible n x = ∃[ x' ] (x -[ n ]→ x')
 
-NormalForm : SK → Set
-NormalForm x = ¬ Reducible x
--- equivalent:
--- NormalForm x = ∀ {x' n} → x -[ n ]→ x' → n ≡ zero
--- TODO could try to make an iso out of this just for fun
+--Reducible : SK → Set
+--Reducible = n-Reducible 1
 
-normalForm? : ∀ x → Dec (NormalForm x)
-normalForm? x with reducible? x
-... | yes p = no λ z → z p
-... | no ¬p = yes ¬p
+--reducible? : ∀ x → Dec (Reducible x)
+--reducible? S = no λ ()
+--reducible? K = no λ ()
+--reducible? (S ` x) with reducible? x
+--... | yes (x' , p) = yes ((S ` x') , `-stepʳ p)
+--... | no ¬p = no λ where (_ , `-stepʳ {y' = y'} p) → ¬p (y' , p)
+--reducible? (K ` x) with reducible? x
+--... | yes (x' , p) = yes ((K ` x') , `-stepʳ p)
+--... | no ¬p = no λ where (_ , `-stepʳ {y' = y'} p) → ¬p (y' , p)
+--reducible? (S ` x ` y) with reducible? x
+--... | yes (x' , p) = yes ((S ` x' ` y) , `-stepˡ (`-stepʳ p))
+--... | no ¬p with reducible? y
+--...   | yes (y' , q) = yes ((S ` x ` y') , `-stepʳ q)
+--...   | no ¬q = no λ where
+--  (.(S ` _ ` y) , `-stepˡ (`-stepʳ {y' = y'} p)) → ¬p (y' , p)
+--  (.(S ` x ` _) , `-stepʳ {y' = y'} p) → ¬q (y' , p)
+--reducible? (K ` x ` y) = yes (x , K-step equal)
+--reducible? (S ` y ` z ` w) =
+--  yes ((y ` w ` (z ` w)) , S-step equal)
+--reducible? (K ` x ` y ` z) =
+--  yes ((x ` z) , `-stepˡ (K-step equal))
+--reducible? (x ` y ` z ` w ` u) with reducible? (x ` y ` z ` w)
+--... | yes (xyzw' , p) = yes ((xyzw' ` u) , `-stepˡ p)
+--... | no ¬p with reducible? u
+--...   | yes (u' , q) = yes ((x ` y ` z ` w ` u') , `-stepʳ q)
+--...   | no ¬q = no λ where
+--  (.(_ ` u) , `-stepˡ {x' = x'} p) → ¬p (x' , p)
+--  (.(x ` y ` z ` w ` _) , `-stepʳ {y' = y'} p) → ¬q (y' , p)
 
-Normalizable : SK → Set
-Normalizable x = ∃[ x' ] ((x -[]→ x') × NormalForm x')
+--sucnReducible↔Reducible :
+--  ∀ x → ∃[ n ] n-Reducible (suc n) x ↔ Reducible x
+--sucnReducible↔Reducible x = record
+--  { to = t x
+--  ; from = zero ,_
+--  }
+--  where
+--    t : ∀ x
+--      → ∃[ n ] ∃[ z ] (x -[ suc n ]→ z) → ∃[ y ] (x -[ 1 ]→ y)
+--    t x (n , z , K-step {x = x'} p) = x' , K-step equal
+--    t x (n , z , S-step {x = x'} {y = y'} {z = z'} p) =
+--      (x' ` z' ` (y' ` z')) , S-step equal
+--    t x (n , .(_ ` _) , `-stepˡ {y = y} p) with t _ (-, -, p)
+--    ... | y' , q = (y' ` y) , `-stepˡ q
+--    t x (n , .(_ ` _) , `-stepʳ {x = x'} p) with t _ (-, -, p)
+--    ... | y' , q = (x' ` y') , `-stepʳ q
 
--- halting problem without input:
--- I believe - though don't hold me to this - that you cannot
--- prove this. Instead we'll likely have to prove that it's
--- impossible to construct an SK expression that can determine
--- whether any other SK expression is normalizable.
--- Actually, you really shouldn't be able to prove it, since you
--- can introduce halting oracle's without getting contradictions,
--- and that's effectively what this is. I'm vaguely wondering if
--- the existence of a halting oracle is equivalent to the law of
--- the excluded middle, but I suspect it isn't. (Also there's an
--- infinite hierarchy of halting oracles, keep that in mind.) In
--- light of that I also wonder if we can prove the negative of
--- this (so double negative of halting problem.) Probably not
--- though?
--- Also - it seems a bit odd that this returs a *proof* of
--- halting, since it seems like that should be impossible to
--- obtain, in general - at least a finite proof, that is, and I do
--- believe we can only represent finite proofs here. So, maybe it
--- makes more sense for it to return
--- Dec (¬ (¬ Normalizable x))
--- This makes it impossible to actually obtain the proof, even if
--- we add double negation elimination as an axiom (we can prove
--- the statement, but we can't run it and get the proof out), and
--- instead just asserts that you can't disprove it.
--- But I could be wrong there, maybe this type is fine for an
--- oracle.
--- And then of course we have the post
--- https://www.alignmentforum.org/posts/yjC5LmjSRD2hR9Pfa/on-the-falsifiability-of-hypercomputation
--- which specifically talks about constructive halting oracles,
--- outputting a number of steps after which the given turing
--- machine is guaranteed to have halted
--- ¬normalizable? : ¬ ∀ x → Dec (Normalizable x)
--- ¬normalizable? p = ?
+---- weakenReducibility : ∀ {n m x}
+----                    → n-Reducible (m + n) x → n-Reducible n x
+---- weakenReducibility p = {!   !}
 
--- interlude: Specialized double negation elimination
-weak-dne : ∀ {x} → ¬ ¬ ¬ x → ¬ x
-weak-dne ¬¬¬p = λ p → ¬¬¬p λ ¬p → ¬p p
+--n+0≡n : ∀ n → n + 0 ≡ n
+--n+0≡n zero = refl
+--n+0≡n (suc n) rewrite n+0≡n n = refl
 
--- To be able to say anything really interesting, we will need a
--- Goedel numbering for SK-expressions.
--- Goedelℕ : ℕ → SK → Set
--- TODO
+--reduce-trans
+--  : ∀ {x z n m}
+--  → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z)) ↔ x -[ n + m ]→ z
+--reduce-trans = record
+--  { to = ?
+--  ; from = ?
+--  }
+--  where
+--    -- t : ∀ {x z n m}
+--    --   → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z)) → x -[ n + m ]→ z
+--    -- t (y , equal , q) = q
+--    -- t (y , K-step p , q) = K-step (t (y , (p , q)))
+--    -- t (y , S-step p , q) = S-step (t (y , (p , q)))
+--    -- t (.(_ ` _) , `-stepˡ p , q) = {!   !}
+--    -- t (.(_ ` _) , `-stepʳ p , q) = {!   !}
+--    f : ∀ {x z n m}
+--      → x -[ n + m ]→ z → ∃[ y ] ((x -[ n ]→ y) × (y -[ m ]→ z))
+--    f {x} {n = zero} p = x , equal , p
+--    f {n = suc n} (K-step p) = {!   !}
+--    f {n = suc n} (S-step p) = {!   !}
+--    f {n = suc n} (`-stepˡ p) = {!   !}
+--    f {n = suc n} (`-stepʳ p) = {!   !}
 
-Cycle : SK → Set
-Cycle x = x -[]→ x
+---- reduce-trans-to
+----   : ∀ {x y z n m}
+----   → ((x -[ n ]→ y) × (y -[ m ]→ z)) → x -[ n + m ]→ z
+---- reduce-trans-to (equal , q) = q
+---- reduce-trans-to (K-step p , q) = K-step (reduce-trans-to (p , q))
+---- reduce-trans-to (S-step p , q) = S-step (reduce-trans-to (p , q))
+---- reduce-trans-to {n = n₁} (`-stepˡ p , equal) rewrite n+0≡n n₁ = `-stepˡ p
+---- reduce-trans-to (`-stepˡ p , K-step q) = {!   !}
+---- reduce-trans-to (`-stepˡ p , S-step q) = {!   !}
+---- reduce-trans-to (`-stepˡ p , `-stepˡ q) = {!   !}
+---- reduce-trans-to (`-stepˡ p , `-stepʳ q) = {!   !}
+---- reduce-trans-to (`-stepʳ p , q) = {!   !}
 
-step : ∀ {x y n} → x -[ suc n ]→ y → ∃[ x' ] (x' -[ n ]→ y)
-step (K-step p) = -, p
-step (S-step p) = -, p
-step (`-stepˡ p) with step p
-... | _ , q = -, `-stepˡ q
-step (`-stepʳ p) with step p
-... | _ , q = -, `-stepʳ q
+---- reduce-trans-from
+----   : ∀ {x y z n m}
+----   → x -[ n + m ]→ z → ((x -[ n ]→ y) × (y -[ m ]→ z))
+---- reduce-trans-from {n = zero} p = {!   !}
+---- reduce-trans-from {n = suc n} p = {!   !}
 
--- nSteps : (n : ℕ) → x -[ n + m ]→ y → ∃[ x' ] (x' -[ m ]→ y)
+---- reduce-trans-iso
+----   : ∀ {x y z n m}
+----   → ((x -[ n ]→ y) × (y -[ m ]→ z)) ≃ x -[ n + m ]→ z
+---- reduce-trans-iso = record
+----   { to = reduce-trans-to
+----   ; from = ?
+----   ; from∘to≡id = ?
+----   ; to∘from≡id = ?
+----   }
 
--------------------------------------
+--NormalForm : SK → Set
+--NormalForm x = ¬ Reducible x
+---- equivalent:
+---- NormalForm x = ∀ {x' n} → x -[ n ]→ x' → n ≡ zero
+---- TODO could try to make an iso out of this just for fun
 
--- if an expression is reducible at least n times, it is called
--- n-reducible (I made up the term)
--- isNReducible? : (x : SK)
---              → Dec (∃[ n ] ∃[ x' ] (x -[ n ]→ x'))
--- isNReducible? = ?
+--normalForm? : ∀ x → Dec (NormalForm x)
+--normalForm? x with reducible? x
+--... | yes p = no λ z → z p
+--... | no ¬p = yes ¬p
 
--- step : ∀ x y {n} → x -[ suc n ]→ y → Σ[ x' ∈ SK ] (x' -[ n ]→ y)
--- step x y p = ?
+--Normalizable : SK → Set
+--Normalizable x = ∃[ x' ] ((x -[]→ x') × NormalForm x')
 
--- NB: The output type is a bit awkward, being a decidable
--- of a negative property
--- NB: this is obsolete
--- nSteps : ℕ → SK → Σ[ x ∈ SK ] Dec (ℕ × ¬ Reducible x)
--- nSteps zero x with reducible x
--- ... | yes p = x , no λ z → ?
--- ... | no ¬p = {!   !}
--- nSteps (suc n) x = {!   !}
+---- halting problem without input:
+---- I believe - though don't hold me to this - that you cannot
+---- prove this. Instead we'll likely have to prove that it's
+---- impossible to construct an SK expression that can determine
+---- whether any other SK expression is normalizable.
+---- Actually, you really shouldn't be able to prove it, since you
+---- can introduce halting oracle's without getting contradictions,
+---- and that's effectively what this is. I'm vaguely wondering if
+---- the existence of a halting oracle is equivalent to the law of
+---- the excluded middle, but I suspect it isn't. (Also there's an
+---- infinite hierarchy of halting oracles, keep that in mind.) In
+---- light of that I also wonder if we can prove the negative of
+---- this (so double negative of halting problem.) Probably not
+---- though?
+---- Also - it seems a bit odd that this returs a *proof* of
+---- halting, since it seems like that should be impossible to
+---- obtain, in general - at least a finite proof, that is, and I do
+---- believe we can only represent finite proofs here. So, maybe it
+---- makes more sense for it to return
+---- Dec (¬ (¬ Normalizable x))
+---- This makes it impossible to actually obtain the proof, even if
+---- we add double negation elimination as an axiom (we can prove
+---- the statement, but we can't run it and get the proof out), and
+---- instead just asserts that you can't disprove it.
+---- But I could be wrong there, maybe this type is fine for an
+---- oracle.
+---- And then of course we have the post
+---- https://www.alignmentforum.org/posts/yjC5LmjSRD2hR9Pfa/on-the-falsifiability-of-hypercomputation
+---- which specifically talks about constructive halting oracles,
+---- outputting a number of steps after which the given turing
+---- machine is guaranteed to have halted
+---- ¬normalizable? : ¬ ∀ x → Dec (Normalizable x)
+---- ¬normalizable? p = ?
 
--- step : SK → Maybe SK
--- step (K ` x ` y) = just x
--- step (S ` x ` y ` z) = just $ x ` z ` (y ` z)
--- step (x ` y) = maybe ((x `_) <$> step y) (just ∘ (_` y)) (step x)
--- step _ = nothing
+---- interlude: Specialized double negation elimination
+--weak-dne : ∀ {x} → ¬ ¬ ¬ x → ¬ x
+--weak-dne ¬¬¬p = λ p → ¬¬¬p λ ¬p → ¬p p
 
--- nSteps : ℕ → SK → Maybe ℕ × SK
--- nSteps zero x = nothing , x
--- nSteps (suc k) x = maybe (just k , x) (nSteps k) (step x)
+---- To be able to say anything really interesting, we will need a
+---- Goedel numbering for SK-expressions.
+---- Goedelℕ : ℕ → SK → Set
+---- TODO
 
--- {-# NON_TERMINATING #-}
--- eval : SK → SK
--- eval x = maybe x eval (step x)
+--Cycle : SK → Set
+--Cycle x = x -[]→ x
 
-size : SK → ℕ
-size S = 1
-size K = 1
-size (x ` y) = size x + size y
+--step : ∀ {x y n} → x -[ suc n ]→ y → ∃[ x' ] (x' -[ n ]→ y)
+--step (K-step p) = -, p
+--step (S-step p) = -, p
+--step (`-stepˡ p) with step p
+--... | _ , q = -, `-stepˡ q
+--step (`-stepʳ p) with step p
+--... | _ , q = -, `-stepʳ q
 
-data ℕExtractable : (x : SK) → Set where
-  zero : ℕExtractable skZero
-  suc  : ∀ {x} → ℕExtractable x → ℕExtractable (skSuc ` x)
+---- nSteps : (n : ℕ) → x -[ n + m ]→ y → ∃[ x' ] (x' -[ m ]→ y)
 
-ℕasSK : ℕ → SK
-ℕasSK zero = skZero
-ℕasSK (suc n) = skSuc ` ℕasSK n
+---------------------------------------
 
-ℕasSKExtractor : (n : ℕ) → ℕExtractable (ℕasSK n)
-ℕasSKExtractor zero = zero
-ℕasSKExtractor (suc n) = suc (ℕasSKExtractor n)
+---- if an expression is reducible at least n times, it is called
+---- n-reducible (I made up the term)
+---- isNReducible? : (x : SK)
+----              → Dec (∃[ n ] ∃[ x' ] (x -[ n ]→ x'))
+---- isNReducible? = ?
 
--- IsFixpoint : SK → Set
--- IsFixpoint x = step x ≡ nothing
+---- step : ∀ x y {n} → x -[ suc n ]→ y → Σ[ x' ∈ SK ] (x' -[ n ]→ y)
+---- step x y p = ?
 
--- TODO rewrite in terms of NormalForm
--- ℕasSKfixpoint : (n : ℕ) → IsFixpoint (ℕasSK n)
--- ℕasSKfixpoint zero = refl
--- ℕasSKfixpoint (suc n) rewrite ℕasSKfixpoint n = refl
--- equivalent:
--- ℕasSKfixpoint (suc n) with step (ℕasSK n) | ℕasSKfixpoint n
--- ℕasSKfixpoint (suc n)    | .nothing       | refl = refl
+---- NB: The output type is a bit awkward, being a decidable
+---- of a negative property
+---- NB: this is obsolete
+---- nSteps : ℕ → SK → Σ[ x ∈ SK ] Dec (ℕ × ¬ Reducible x)
+---- nSteps zero x with reducible x
+---- ... | yes p = x , no λ z → ?
+---- ... | no ¬p = {!   !}
+---- nSteps (suc n) x = {!   !}
 
-instance
-  DecInvariant : RawInvariant Dec
-  DecInvariant = record
-    { invmap = λ fʸ fⁿ → foldDec (yes ∘ fʸ) (no ∘ (_∘ fⁿ))
-    }
+---- step : SK → Maybe SK
+---- step (K ` x ` y) = just x
+---- step (S ` x ` y ` z) = just $ x ` z ` (y ` z)
+---- step (x ` y) = maybe ((x `_) <$> step y) (just ∘ (_` y)) (step x)
+---- step _ = nothing
 
--- making this an instance breaks things
-FunctorInvariant : {F : Set → Set} → {{RawFunctor F}}
-                 → RawInvariant F
-FunctorInvariant = record
-  { invmap = const ∘ _<$>_
-  }
+---- nSteps : ℕ → SK → Maybe ℕ × SK
+---- nSteps zero x = nothing , x
+---- nSteps (suc k) x = maybe (just k , x) (nSteps k) (step x)
 
-ℕExtractable? : (x : SK) → Dec (ℕExtractable x)
-ℕExtractable? skZero = yes zero
-ℕExtractable? (skSuc ` x) =
-  invmap suc (λ where (suc p) → p) (ℕExtractable? x)
-ℕExtractable? S = no λ ()
-ℕExtractable? K = no λ ()
-ℕExtractable? (S ` x) = no λ ()
-ℕExtractable? (K ` S) = no λ ()
-ℕExtractable? (K ` K) = no λ ()
-ℕExtractable? (K ` (S ` x)) = no λ ()
-ℕExtractable? (K ` (K ` x)) = no λ ()
-ℕExtractable? (K ` (S ` S ` x)) = no λ ()
-ℕExtractable? (K ` (S ` K ` S)) = no λ ()
-ℕExtractable? (K ` (S ` K ` (x ` y))) = no λ ()
-ℕExtractable? (K ` (S ` (x ` y) ` z)) = no λ ()
-ℕExtractable? (K ` (K ` x ` y)) = no λ ()
-ℕExtractable? (K ` (x ` y ` z ` w)) = no λ ()
-ℕExtractable? (K ` x ` y) = no λ ()
-ℕExtractable? (S ` S ` x) = no λ ()
-ℕExtractable? (S ` K ` x) = no λ ()
-ℕExtractable? (S ` (S ` x) ` y) = no λ ()
-ℕExtractable? (S ` (K ` x) ` y) = no λ ()
-ℕExtractable? (S ` (S ` S ` y) ` z) = no λ ()
-ℕExtractable? (S ` (S ` K ` y) ` z) = no λ ()
-ℕExtractable? (S ` (S ` (S ` x₁) ` y) ` z) = no λ ()
-ℕExtractable? (S ` (S ` (K ` S) ` S) ` z) = no λ ()
-ℕExtractable? (S ` (S ` (K ` S) ` (y ` y₁)) ` z) = no λ ()
-ℕExtractable? (S ` (S ` (K ` K) ` x) ` y) = no λ ()
-ℕExtractable? (S ` (S ` (K ` (x ` y)) ` z) ` w) = no λ ()
-ℕExtractable? (S ` (S ` (x ` y ` z) ` w) ` u) = no λ ()
-ℕExtractable? (S ` (K ` x ` y) ` z) = no λ ()
-ℕExtractable? (S ` (x ` y ` z ` w) ` v) = no λ ()
-ℕExtractable? (x ` y ` z ` w) = no λ ()
+---- {-# NON_TERMINATING #-}
+---- eval : SK → SK
+---- eval x = maybe x eval (step x)
 
-extractℕ : (x : SK) → ℕExtractable x → ℕ
-extractℕ skZero zero = zero
-extractℕ (skSuc ` x) (suc p) = suc (extractℕ x p)
+--size : SK → ℕ
+--size S = 1
+--size K = 1
+--size (x ` y) = size x + size y
 
-ℕ≃ℕSK : ℕ ≃ Σ SK ℕExtractable
-ℕ≃ℕSK = record
-  { to = λ n → ℕasSK n , ℕasSKExtractor n
-  ; from = uncurry extractℕ
-  ; from∘to≡id = ftid
-  ; to∘from≡id = tfid
-  }
-  where
-    ftid : (n : ℕ) → extractℕ (ℕasSK n) (ℕasSKExtractor n) ≡ n
-    ftid zero = refl
-    ftid (suc n) rewrite ftid n = refl
-    tfid : (ℕx : Σ SK ℕExtractable)
-         → let n = uncurry extractℕ ℕx
-           in (ℕasSK (n) , ℕasSKExtractor (n)) ≡ ℕx
-    tfid (_ , zero) = refl
-    tfid ((_ ` x) , suc p) with extractℕ x p | tfid (x , p)
-    ... | _ | refl = refl
+--data ℕExtractable : (x : SK) → Set where
+--  zero : ℕExtractable skZero
+--  suc  : ∀ {x} → ℕExtractable x → ℕExtractable (skSuc ` x)
+
+--ℕasSK : ℕ → SK
+--ℕasSK zero = skZero
+--ℕasSK (suc n) = skSuc ` ℕasSK n
+
+--ℕasSKExtractor : (n : ℕ) → ℕExtractable (ℕasSK n)
+--ℕasSKExtractor zero = zero
+--ℕasSKExtractor (suc n) = suc (ℕasSKExtractor n)
+
+---- IsFixpoint : SK → Set
+---- IsFixpoint x = step x ≡ nothing
+
+---- TODO rewrite in terms of NormalForm
+---- ℕasSKfixpoint : (n : ℕ) → IsFixpoint (ℕasSK n)
+---- ℕasSKfixpoint zero = refl
+---- ℕasSKfixpoint (suc n) rewrite ℕasSKfixpoint n = refl
+---- equivalent:
+---- ℕasSKfixpoint (suc n) with step (ℕasSK n) | ℕasSKfixpoint n
+---- ℕasSKfixpoint (suc n)    | .nothing       | refl = refl
+
+--instance
+--  DecInvariant : RawInvariant Dec
+--  DecInvariant = record
+--    { invmap = λ fʸ fⁿ → foldDec (yes ∘ fʸ) (no ∘ (_∘ fⁿ))
+--    }
+
+---- making this an instance breaks things
+--FunctorInvariant : {F : Set → Set} → {{RawFunctor F}}
+--                 → RawInvariant F
+--FunctorInvariant = record
+--  { invmap = const ∘ _<$>_
+--  }
+
+--ℕExtractable? : (x : SK) → Dec (ℕExtractable x)
+--ℕExtractable? skZero = yes zero
+--ℕExtractable? (skSuc ` x) =
+--  invmap suc (λ where (suc p) → p) (ℕExtractable? x)
+--ℕExtractable? S = no λ ()
+--ℕExtractable? K = no λ ()
+--ℕExtractable? (S ` x) = no λ ()
+--ℕExtractable? (K ` S) = no λ ()
+--ℕExtractable? (K ` K) = no λ ()
+--ℕExtractable? (K ` (S ` x)) = no λ ()
+--ℕExtractable? (K ` (K ` x)) = no λ ()
+--ℕExtractable? (K ` (S ` S ` x)) = no λ ()
+--ℕExtractable? (K ` (S ` K ` S)) = no λ ()
+--ℕExtractable? (K ` (S ` K ` (x ` y))) = no λ ()
+--ℕExtractable? (K ` (S ` (x ` y) ` z)) = no λ ()
+--ℕExtractable? (K ` (K ` x ` y)) = no λ ()
+--ℕExtractable? (K ` (x ` y ` z ` w)) = no λ ()
+--ℕExtractable? (K ` x ` y) = no λ ()
+--ℕExtractable? (S ` S ` x) = no λ ()
+--ℕExtractable? (S ` K ` x) = no λ ()
+--ℕExtractable? (S ` (S ` x) ` y) = no λ ()
+--ℕExtractable? (S ` (K ` x) ` y) = no λ ()
+--ℕExtractable? (S ` (S ` S ` y) ` z) = no λ ()
+--ℕExtractable? (S ` (S ` K ` y) ` z) = no λ ()
+--ℕExtractable? (S ` (S ` (S ` x₁) ` y) ` z) = no λ ()
+--ℕExtractable? (S ` (S ` (K ` S) ` S) ` z) = no λ ()
+--ℕExtractable? (S ` (S ` (K ` S) ` (y ` y₁)) ` z) = no λ ()
+--ℕExtractable? (S ` (S ` (K ` K) ` x) ` y) = no λ ()
+--ℕExtractable? (S ` (S ` (K ` (x ` y)) ` z) ` w) = no λ ()
+--ℕExtractable? (S ` (S ` (x ` y ` z) ` w) ` u) = no λ ()
+--ℕExtractable? (S ` (K ` x ` y) ` z) = no λ ()
+--ℕExtractable? (S ` (x ` y ` z ` w) ` v) = no λ ()
+--ℕExtractable? (x ` y ` z ` w) = no λ ()
+
+--extractℕ : (x : SK) → ℕExtractable x → ℕ
+--extractℕ skZero zero = zero
+--extractℕ (skSuc ` x) (suc p) = suc (extractℕ x p)
+
+--ℕ≃ℕSK : ℕ ≃ Σ SK ℕExtractable
+--ℕ≃ℕSK = record
+--  { to = λ n → ℕasSK n , ℕasSKExtractor n
+--  ; from = uncurry extractℕ
+--  ; from∘to≡id = ftid
+--  ; to∘from≡id = tfid
+--  }
+--  where
+--    ftid : (n : ℕ) → extractℕ (ℕasSK n) (ℕasSKExtractor n) ≡ n
+--    ftid zero = refl
+--    ftid (suc n) rewrite ftid n = refl
+--    tfid : (ℕx : Σ SK ℕExtractable)
+--         → let n = uncurry extractℕ ℕx
+--           in (ℕasSK (n) , ℕasSKExtractor (n)) ≡ ℕx
+--    tfid (_ , zero) = refl
+--    tfid ((_ ` x) , suc p) with extractℕ x p | tfid (x , p)
+--    ... | _ | refl = refl
